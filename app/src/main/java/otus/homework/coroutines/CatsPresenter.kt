@@ -1,11 +1,13 @@
 package otus.homework.coroutines
 
+import android.net.Uri
 import android.widget.Toast
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CoroutineName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
+import kotlinx.coroutines.async
 import kotlinx.coroutines.cancelChildren
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.supervisorScope
@@ -18,7 +20,8 @@ import kotlin.coroutines.CoroutineContext
 import kotlin.time.Duration
 
 class CatsPresenter(
-    private val catsService: CatsService
+    private val factService: CatsService,
+    private val imageService: ImageService
 ) {
 
     private class PresenterScope: CoroutineScope {
@@ -31,21 +34,33 @@ class CatsPresenter(
     private var _catsView: ICatsView? = null
 
     fun onInitComplete() {
-        if (initJob?.isActive == true) return
+        initJob?.cancel()
         initJob = coroutineScope.launch {
             supervisorScope {
                 val context = _catsView?.context() ?: return@supervisorScope
                 try {
-                    val response = withContext(Dispatchers.IO) {
-                        catsService.getCatFact()
-                    }
-                    if (response.isSuccessful && response.body() != null) {
-                        _catsView?.populate(response.body()!!)
-                    } else {
-                        response.errorBody()?.string()?.let { error ->
-                            Toast.makeText(context, error, Toast.LENGTH_SHORT).show()
+                    val fact = async(Dispatchers.IO) {
+                        factService.getCatFact().let { r ->
+                            if (r.isSuccessful && r.body() != null) {
+                                r.body()!!
+                            } else {
+                                throw Exception(r.errorBody()?.string())
+                            }
                         }
                     }
+                    val image = async(Dispatchers.IO) {
+                        imageService.getCatImage().let { r ->
+                            if (r.isSuccessful && r.body() != null) {
+                                r.body()!!
+                            } else {
+                                throw Exception(r.errorBody()?.string())
+                            }
+                        }
+                    }
+
+                    val uiFact = UIFact(fact.await().fact, Uri.parse(image.await().firstOrNull()?.url ?: ""))
+
+                    _catsView?.populate(uiFact)
                 } catch (e: Exception) {
                     when (e) {
                         is SocketTimeoutException -> {
